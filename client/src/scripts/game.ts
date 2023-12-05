@@ -1,5 +1,5 @@
 import $ from "jquery";
-
+import axios from "axios";
 import { Application, Container } from "pixi.js";
 import {
     GameConstants,
@@ -159,7 +159,7 @@ export class Game {
         }
     }
 
-    connect(address: string): void {
+    async connect(address: string, apiAddress: string) {
         this.error = false;
 
         if (this.gameStarted) return;
@@ -187,22 +187,7 @@ export class Game {
             this.sendPacket(new PingPacket());
             this.lastPingDate = Date.now();
 
-            const joinPacket = new JoinPacket();
-            joinPacket.isMobile = this.inputManager.isMobile;
-            joinPacket.name = this.console.getBuiltInCVar("cv_player_name");
-            joinPacket.skin = Loots.fromString(this.console.getBuiltInCVar("cv_loadout_skin"));
-
-            for (const emote of ["top", "right", "bottom", "left"] as const) {
-                joinPacket.emotes.push(Emotes.fromString(this.console.getBuiltInCVar(`cv_loadout_${emote}_emote`)));
-            }
-
-            this.sendPacket(joinPacket);
-
-            this.camera.addObject(this.playersContainer, this.bulletsContainer, this.gasRender.graphics);
-
-            this.map.indicator.setFrame("player_indicator");
-
-            this._tickTimeoutID = window.setInterval(this.tick.bind(this), GameConstants.tps);
+            this.onOpenLateInit(apiAddress);
         };
 
         // Handle incoming messages
@@ -304,6 +289,132 @@ export class Game {
                 if (!this.error) this.endGame();
             }
         };
+    }
+
+    async onOpenLateInit(apiAddress: string) {
+        const joinPacket = new JoinPacket();
+        joinPacket.isMobile = this.inputManager.isMobile;
+        joinPacket.name = this.console.getBuiltInCVar("cv_player_name");
+
+        const dvToken = this.console.getBuiltInCVar("dv_token") ?? "";
+        let accessToken = this.console.getBuiltInCVar("dv_access_token") ?? "";
+        if (!dvToken && !accessToken) {
+            joinPacket.accessToken = "";
+        } else {
+            if (dvToken) {
+                await this.processNewUser(dvToken, apiAddress);
+            }
+            accessToken = this.console.getBuiltInCVar("dv_access_token") ?? "";
+            if (accessToken) {
+                await this.refreshJwtTokenWhenNeed(apiAddress);
+            }
+
+            joinPacket.accessToken = this.console.getBuiltInCVar("dv_access_token") ?? "";;
+        }
+
+        joinPacket.skin = Loots.fromString(this.console.getBuiltInCVar("cv_loadout_skin"));
+        for (const emote of ["top", "right", "bottom", "left"] as const) {
+            joinPacket.emotes.push(Emotes.fromString(this.console.getBuiltInCVar(`cv_loadout_${emote}_emote`)));
+        }
+
+        this.sendPacket(joinPacket);
+
+        this.camera.addObject(this.playersContainer, this.bulletsContainer, this.gasRender.graphics);
+
+        this.map.indicator.setFrame("player_indicator");
+
+        this._tickTimeoutID = window.setInterval(this.tick.bind(this), GameConstants.tps);
+    };
+
+    async processNewUser(dvToken: string, apiAddress: string) {
+        const tokenType = "tempToken";
+        const isExpired = await this.isTokenExpired(dvToken, tokenType, apiAddress);
+        if (isExpired) {
+            this.showLogin();
+            return;
+        }
+
+        //request for acccess token
+        const obj = await this.requestJwtToken(dvToken, tokenType, apiAddress);
+        if (obj == null) {
+            this.showLogin();
+            return;
+        }
+
+        const accessToken = obj.accessToken;
+        const refreshToken = obj.refreshToken;
+        //const session = obj.session;
+        this.console.setBuiltInCVar("dv_access_token", accessToken);
+        this.console.setBuiltInCVar("dv_access_token_updatedat", new Date().getTime());
+        this.console.setBuiltInCVar("dv_refresh_token", refreshToken);
+        this.console.setBuiltInCVar("dv_token", "");
+    }
+
+    async refreshJwtTokenWhenNeed(apiAddress: string) {
+        const accessTokenUpdatedAtTime = this.console.getBuiltInCVar("dv_access_token_updatedat") ?? 0;
+        const timeDiffInMS = new Date().getTime() - accessTokenUpdatedAtTime;
+        if (timeDiffInMS < 14*60000) {
+            return;
+        }
+
+        const refreshTokenLocal = this.console.getBuiltInCVar("dv_refresh_token") ?? "";
+        const obj = await this.requestJwtToken(refreshTokenLocal, "refreshToken", apiAddress);
+        if (obj == null) {
+            this.showLogin();
+            return;
+        }
+
+        const accessToken = obj.accessToken;
+        const refreshToken = obj.refreshToken;
+        //const session = obj.session;
+        this.console.setBuiltInCVar("dv_access_token", accessToken);
+        this.console.setBuiltInCVar("dv_access_token_updatedat", new Date().getTime());
+        this.console.setBuiltInCVar("dv_refresh_token", refreshToken);
+    }
+
+    async requestJwtToken(token: string, tokenType: string, apiAddress: string) {
+        let inputData = JSON.stringify({
+            token,
+            tokenType,
+        })
+        //apiAddress + 
+        const { status, data } = await axios.post("/api/issueJwtToken", inputData, {headers: { 'Content-Type': 'application/json',}});        
+        if (!status || status != 200) {
+            return null;
+        }        
+        if (data && data.status == true) {
+            return data;
+        }
+
+        return null;
+    }
+
+    async isTokenExpired(token: string, tokenType: string, apiAddress: string) {
+        let inputData = JSON.stringify({
+            token,
+            tokenType,
+        });
+        //apiAddress + 
+        const { status, data } = await axios.post("/api/isTokenValid", inputData, {headers: { 'Content-Type': 'application/json',}});        
+        if (!status || status != 200) {
+          return true;
+        }        
+        if (data && data.status == true) {
+            return false;
+        }
+
+        return true;
+    }
+
+    showLogin(): void {
+        $("#splash-ui").fadeIn();
+        $("#splash-server-message-text").html("authentication had exprired, please login again!");
+        $("#splash-server-message").show();
+
+        function pageRedirect() {
+            window.location.replace("https://memeordi.org/game");
+        }      
+        setTimeout("pageRedirect()", 5000);
     }
 
     startGame(packet: JoinedPacket): void {

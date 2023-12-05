@@ -154,7 +154,8 @@ $(async(): Promise<void> => {
                 if (nameColor) address += `&nameColor=${nameColor}`;
                 if (lobbyClearing) address += "&lobbyClearing=true";
 
-                game.connect(address);
+                const apiAddress = `http${urlPart}/`;
+                game.connect(address, apiAddress);
                 $("#splash-server-message").hide();
             } else {
                 let showWarningModal = false;
@@ -225,5 +226,11 @@ $(async(): Promise<void> => {
     if (role) {
         game.console.setBuiltInCVar("dv_role", role);
         location.search = "";
+    }
+
+    const token = params.get("token");
+    if (token) {
+        game.console.setBuiltInCVar("dv_token", token);
+        window.location = window.location.href.split("?")[0];
     }
 });

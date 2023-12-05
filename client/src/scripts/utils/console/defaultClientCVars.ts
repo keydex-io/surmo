@@ -56,6 +56,10 @@ export interface CVarTypeMapping {
     readonly dv_role: ConVar<string>
     readonly dv_name_color: ConVar<string>
     readonly dv_lobby_clearing: ConVar<boolean>
+    readonly dv_token: ConVar<string>
+    readonly dv_access_token: ConVar<string>
+    readonly dv_access_token_updatedat: ConVar<number>
+    readonly dv_refresh_token: ConVar<string>
 }
 
 type SimpleCVarMapping = {
@@ -114,7 +118,11 @@ export const defaultClientCVars: SimpleCVarMapping = Object.freeze({
     dv_password: "",
     dv_role: "",
     dv_name_color: "",
-    dv_lobby_clearing: false
+    dv_lobby_clearing: false,
+    dv_token: "",
+    dv_access_token: "",
+    dv_access_token_updatedat: 0,
+    dv_refresh_token: "",
 } satisfies SimpleCVarMapping);
 
 export const defaultBinds = Object.freeze({

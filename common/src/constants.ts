@@ -24,7 +24,9 @@ export enum PacketType {
     Ping,
     Spectate,
     Report,
-    MapPing
+    MapPing,
+    AccessTokenExpired,
+    InvalidAccessToken
 }
 
 export enum AnimationType {
@@ -121,7 +123,8 @@ export const GameConstants = {
         maxAdrenaline: 100,
         maxWeapons: 3,
         killLeaderMinKills: 3,
-        maxMouseDist: 128
+        maxMouseDist: 128,
+        accessTokenMaxLength: 512,
     },
     airdrop: {
         fallTime: 8000,

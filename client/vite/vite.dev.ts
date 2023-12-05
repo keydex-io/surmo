@@ -4,14 +4,30 @@ import common from "./vite.common";
 
 const config: UserConfig = {
     server: {
-        port: 3000,
+        port: 3900,
         strictPort: true,
-        host: "0.0.0.0"
+        cors: false,
+        host: "0.0.0.0",
+        proxy: {
+            '/api': {
+              target: 'http://192.168.1.8:8000/',
+              changeOrigin: true,
+              secure: false,
+            },
+        },
     },
     preview: {
-        port: 3000,
+        port: 3900,
         strictPort: true,
-        host: "0.0.0.0"
+        cors: false,
+        host: "0.0.0.0",
+        proxy: {
+            '/api': {
+              target: 'http://192.168.1.8:8000/',
+              changeOrigin: true,
+              secure: false,
+            },
+        },
     },
 
     define: {

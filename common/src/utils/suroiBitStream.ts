@@ -287,4 +287,12 @@ export class SuroiBitStream extends BitStream {
     readPlayerName(): string {
         return this.readASCIIString(GameConstants.player.nameMaxLength);
     }
+
+    writeAccesstToken(token: string): void {
+        this.writeASCIIString(token, GameConstants.player.accessTokenMaxLength);
+    }
+
+    readAccesstToken(): string {
+        return this.readASCIIString(GameConstants.player.accessTokenMaxLength);
+    }
 }

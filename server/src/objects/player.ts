@@ -55,7 +55,9 @@ export class Player extends GameObject<ObjectCategory.Player> {
 
     name: string;
     readonly ip?: string;
-
+    email?: string;
+    userId?: string;
+    
     readonly loadout: {
         skin: SkinDefinition
         emotes: EmoteDefinition[]

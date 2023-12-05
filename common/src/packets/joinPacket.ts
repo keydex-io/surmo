@@ -6,10 +6,12 @@ import { type SuroiBitStream } from "../utils/suroiBitStream";
 import { Packet } from "./packet";
 
 export class JoinPacket extends Packet {
-    override readonly allocBytes = 24;
+    override readonly allocBytes = 536;
     override readonly type = PacketType.Join;
 
     name!: string;
+    accessToken!: string;
+
     isMobile!: boolean;
 
     skin!: SkinDefinition;
@@ -21,6 +23,8 @@ export class JoinPacket extends Packet {
         const stream = this.stream;
 
         stream.writePlayerName(this.name);
+        stream.writeAccesstToken(this.accessToken);
+
         stream.writeBoolean(this.isMobile);
 
         Loots.writeToStream(stream, this.skin);
@@ -32,6 +36,7 @@ export class JoinPacket extends Packet {
 
     override deserialize(stream: SuroiBitStream): void {
         this.name = stream.readPlayerName().replaceAll(/<[^>]+>/g, "").trim(); // Regex strips out HTML
+        this.accessToken = stream.readAccesstToken();
 
         this.isMobile = stream.readBoolean();
         this.skin = Loots.readFromStream(stream);

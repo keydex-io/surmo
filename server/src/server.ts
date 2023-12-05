@@ -1,5 +1,9 @@
 import { Config } from "./config";
 import { version } from "../../package.json";
+import { bodyParser } from "./utils/postBodyParser";
+import { generateAccessToken, generateRefreshToken } from "./jwt/auth";
+import { verifyTokenWithType } from "./jwt/verifyAccessToken";
+import { getPgPool } from "./utils/pgDb";
 
 import {
     App,
@@ -43,12 +47,13 @@ const app = Config.ssl
     : App();
 
 const games: Array<Game | undefined> = [];
+const dbPool = getPgPool();
 
 export function newGame(id?: number): number {
     if (id !== undefined) {
         if (!games[id] || games[id]?.stopped) {
             Logger.log(`Game ${id} | Creating...`);
-            games[id] = new Game(id);
+            games[id] = new Game(id, dbPool);
             return id;
         }
     } else {
@@ -70,7 +75,7 @@ export function endGame(id: number, createNewGame: boolean): void {
     Logger.log(`Game ${id} | Ended`);
     if (createNewGame) {
         Logger.log(`Game ${id} | Creating...`);
-        games[id] = new Game(id);
+        games[id] = new Game(id, dbPool);
     } else {
         games[id] = undefined;
     }
@@ -192,6 +197,80 @@ app.get("/api/removePunishment", (res, req) => {
     } else {
         forbidden(res);
     }
+});
+
+const errorHandler = () => {
+    console.error('request aborted');
+};
+
+app.post("/api/isTokenValid", (res, req) => {
+    cors(res);
+    bodyParser(res, req, (data, wasParsed) => {
+        if (!wasParsed) {
+            console.log('Body not parsed!');
+            res.writeHeader("Content-Type", "application/json").end(JSON.stringify({status: false, message: "occur error..."}));
+            return;
+        }
+
+        // `data` argument is the parsed JSON/xWwwFormUrlEncoded/Raw Buffer body
+        console.log(data);
+
+        if (!data.token || !data.tokenType) {
+            res.writeHeader("Content-Type", "application/json").end(JSON.stringify({status: false, message: "token or tokenType is null!"}));
+            return;
+        }
+
+        const token = data.token;
+        const tokenType = data.tokenType;
+        console.log("token: ", token, tokenType);
+
+        const verifyResp = verifyTokenWithType(token, tokenType);
+        if (verifyResp == null) {
+            res.writeHeader("Content-Type", "application/json").end(JSON.stringify({status: false, message: "unvalid token or tokenType!"}));
+            return;
+        }
+        res.writeHeader("Content-Type", "application/json").end(JSON.stringify({status: true, message: "token is valid!"}));
+    }, errorHandler);
+});
+
+app.post("/api/issueJwtToken", (res, req) => {
+    cors(res);
+
+    bodyParser(res, req, (data, wasParsed) => {
+        if (!wasParsed) {
+            console.log('Body not parsed!');
+            res.writeHeader("Content-Type", "application/json").end(JSON.stringify({status: false, message: "occur error..."}));
+            return;
+        }        
+        // `data` argument is the parsed JSON/xWwwFormUrlEncoded/Raw Buffer body
+        console.log(data);
+        if (!data.token || !data.tokenType) {
+            res.writeHeader("Content-Type", "application/json").end(JSON.stringify({status: false, message: "token or tokenType is null!"}));
+            return;
+        }
+
+        const token = data.token;
+        const tokenType = data.tokenType;
+        console.log("token: ", token, tokenType);
+
+        const verifyResp = verifyTokenWithType(token, tokenType);
+        if (verifyResp == null) {
+            res.writeHeader("Content-Type", "application/json").end(JSON.stringify({status: false, message: "unvalid token or tokenType!"}));
+            return;
+        }
+
+        const accessToken = generateAccessToken(verifyResp!);
+        const refreshToken = generateRefreshToken(verifyResp!);
+
+        const respObj = {
+            status: true,
+            accessToken,
+            refreshToken,
+            session: verifyResp,
+            message: ""
+        };
+        res.writeHeader("Content-Type", "application/json").end(JSON.stringify(respObj));
+    }, errorHandler);
 });
 
 export interface PlayerContainer {

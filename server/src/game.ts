@@ -45,6 +45,14 @@ import { type ObstacleDefinition, Obstacles } from "../../common/src/definitions
 import { Timeout } from "../../common/src/utils/misc";
 import { Building } from "./objects/building";
 import { Parachute } from "./objects/parachute";
+import { verifyAccessToken } from "./jwt/verifyAccessToken";
+import type { Pool } from 'pg';
+import { BusinessType, BusinessType_TO_Name_MAP } from "./types/BusinessType";
+
+export const JOIN_GAME_CONSUME_ARBS_AMOUNT: number = 50;
+import { createLogger } from './utils/logging';
+const logger = createLogger('ServerLog', 'ServerLog');
+logger.warn("hello!");
 
 export class Game {
     readonly _id: number;
@@ -145,8 +153,11 @@ export class Game {
 
     tickDelta = 1000 / GameConstants.tps;
 
-    constructor(id: number) {
+    db: Pool;
+
+    constructor(id: number, pgDb: Pool) {
         this._id = id;
+        this.db = pgDb;
 
         const start = Date.now();
 
@@ -427,6 +438,21 @@ export class Game {
         ) name = GameConstants.player.defaultName;
         player.name = name;
 
+        logger.info(`\naccessToken: ${packet.accessToken}`);
+        const verifyResp = verifyAccessToken(packet.accessToken);
+        if (verifyResp != null) {
+            player.email =  verifyResp.email;
+            player.userId =  verifyResp.id;
+
+            //deduct arbs from user balance
+            this.deductArbsFromUserBalance(player);
+        }
+        if (packet.accessToken !== "" && verifyResp == null) {
+            //verify failed, reject player to join game!
+            this.removePlayer(player);
+            return;
+        }
+
         player.isMobile = packet.isMobile;
         const skin = packet.skin;
         if (
@@ -497,6 +523,98 @@ export class Game {
         try {
             player.socket.close();
         } catch (e) { }
+    }
+
+    deductArbsFromUserBalance(player: Player) {
+        const businessType = BusinessType.PlayGameConsume;
+        const note = BusinessType_TO_Name_MAP[businessType];
+
+        try {
+            this.doDeductArbs(player, "arbs", JOIN_GAME_CONSUME_ARBS_AMOUNT, businessType, note);
+        } catch (e: any) {
+            logger.warn(`Error while doDeductArbss:  error: ${JSON.stringify(e)}`);
+            throw new Error(`Error while doDeductArbss:  error: ${JSON.stringify(e)}`)
+        }
+    }
+
+    async doDeductArbs(player: Player, symbol: string, deltaBalance: number, businessType: BusinessType, note: string) {
+        let orderId;
+        const userId = player.userId ?? "";
+        const email = player.email ?? "";
+        const playName = player.name ?? "";
+        const ip = player.ip ?? "";
+
+        try {
+            const log = await this.db.query(
+                'INSERT INTO user_play_games ("user_id", "email", "play_name", "ip", "updated_at")'
+                + ' VALUES ($1, $2, $3, $4, NOW()) RETURNING id', [userId, email, playName, ip]
+              )
+              if (!log || log.rows.length == 0) {
+                logger.error(`insert user_play_games failed! userId: ${userId}, playName: ${playName}`)
+                throw new Error(`insert user_play_games failed! userId: ${userId}, playName: ${playName}`)
+              }
+              orderId = log.rows[0].id
+        } catch (e: any) {
+            logger.error(`Error while insert user_play_games:  error: ${JSON.stringify(e)}`);
+            throw new Error(`Error while insert user_play_games:  error: ${JSON.stringify(e)}`)
+        }
+        if (!userId) {
+            logger.warn("userId is null, skip deduct arbs balance!", {args: {orderId, playName, ip}});
+            return;
+        }
+
+        try {
+          logger.warn('require to deduct arbs from user:', {args: {userId, symbol, orderId, deltaBalance, businessType, note}})
+          const select = await this.db.query('SELECT balance FROM user_funds WHERE "userId"=$1 AND "tokenSymbol"=$2', [userId, symbol]);
+    
+          if (!select || select.rowCount == 0) {
+            throw new Error(`get user balance failed! userId: ${userId} ${symbol}`);
+          }
+          const userBalance = select.rows[0].balance;
+          if (userBalance <= 0) {
+            logger.warn('user arbs balance not enough!', {args: {userId, symbol, orderId, deltaBalance, userBalance}})
+            return;
+          }
+
+          let afterBalance = 0;
+          let trueDeltaBalance;
+          if (userBalance >= deltaBalance) {
+            afterBalance = userBalance - deltaBalance;
+            trueDeltaBalance = deltaBalance;
+          } else {
+            afterBalance = 0;
+            trueDeltaBalance = userBalance - afterBalance;
+          }
+    
+          //write user_fund_logs first
+          const log = await this.db.query(
+            'INSERT INTO user_fund_logs ("userId", "tokenSymbol", "deltaBalance", "beforeBalance", "afterBalance", "businessType", "businessId", "note", "updatedAt")'
+            + ' VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) RETURNING id',
+            [userId, symbol, -trueDeltaBalance, userBalance, afterBalance, businessType, orderId, note]
+            )
+          if (!log || log.rows.length == 0) {
+            logger.error('insert user_fund_logs failed!', {args: {userId, symbol, trueDeltaBalance, userBalance, afterBalance, businessType, businessId: orderId, note}})
+            throw new Error(`insert user_fund_logs failed! userId: ${userId}, symbol: ${symbol}, deltaBalance: -${trueDeltaBalance}`)
+          }
+          //fundLogId = log.rows[0].id
+
+          //do update real record
+          const updatevalues = [afterBalance, userId, symbol]
+          const update = await this.db.query(
+            'UPDATE user_funds SET balance=$1, "updatedAt"=NOW() WHERE "userId"=$2 AND "tokenSymbol"=$3 RETURNING id',
+            updatevalues
+          )
+          if (!update || update.rowCount == 0) {
+            logger.error('update user_funds failed!', {args: {userId, symbol, trueDeltaBalance, userBalance, afterBalance, businessType, note}})
+            throw new Error(`update user_funds failed! userId: ${userId} ${symbol}, deltaBalance: -${trueDeltaBalance}, afterBalance: ${afterBalance}`);
+          }
+        } catch (e: any) {
+            logger.error('Error while deductFundFromUserBalance:', {args: {e}});
+            throw new Error(`deductFundFromUserBalance failed! userId: ${userId}, symbol: ${symbol}, deltaBalance: ${deltaBalance}`)
+        }
+        logger.warn("deductFundFromUserBalance successfully!", {args: {userId, symbol, deltaBalance}})
+
+        return true;
     }
 
     /**
